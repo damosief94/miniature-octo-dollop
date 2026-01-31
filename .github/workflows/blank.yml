@@ -1,85 +1,46 @@
-name: Windows-CRD-VirtualBox
+name: Ultimate-Win10-CRD
 
-on:
+on: 
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-2019
-    timeout-minutes: 360
+    runs-on: windows-2022  # Windows Server 2019 (الأقرب لبيئة Windows 10)
     steps:
-      - name: Configure Virtualization
+      - name: Download Chrome Installer
         shell: pwsh
         run: |
-          Write-Host "=== Step 1: Virtualization Configuration ===" -ForegroundColor Cyan
-          # تفعيل الميزات اللازمة
-          dism /online /enable-feature /featurename:HypervisorPlatform /all /quiet /norestart
-          # تعطيل Hyper-V لمنع التعارض مع VirtualBox Engine
-          dism /online /disable-feature /featurename:Microsoft-Hyper-V /quiet /norestart
-          bcdedit /set hypervisorlaunchtype off
-          Write-Host "✅ Virtualization configured." -ForegroundColor Green
+          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile "chrome_installer.exe"
+          Start-Process -FilePath "chrome_installer.exe" -Args "/silent /install" -Wait
 
-      - name: Install Chrome & CRD
+      - name: Download and Install CRD
         shell: pwsh
         run: |
-          Write-Host "=== Step 2: Installing Chrome & CRD ===" -ForegroundColor Cyan
-          $chromeUrl = "https://dl.google.com/chrome/install/latest/chrome_installer.exe"
-          Invoke-WebRequest -Uri $chromeUrl -OutFile "chrome_installer.exe"
-          Start-Process "chrome_installer.exe" -ArgumentList "/silent /install" -Wait
-          
-          $crdUrl = "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi"
-          Invoke-WebRequest -Uri $crdUrl -OutFile "crd.msi"
-          Start-Process "msiexec.exe" -ArgumentList "/i crd.msi /quiet /qn /norestart" -Wait
-          Remove-Item "chrome_installer.exe", "crd.msi" -Force
+          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd.msi"
+          Start-Process -FilePath "msiexec.exe" -Args "/i crd.msi /quiet /qn" -Wait
 
-      - name: Install VirtualBox 7.0
-        shell: pwsh
-        run: |
-          Write-Host "=== Step 3: Installing VirtualBox ===" -ForegroundColor Cyan
-          $vboxUrl = "https://download.virtualbox.org/virtualbox/7.0.14/VirtualBox-7.0.14-161095-Win.exe"
-          Invoke-WebRequest -Uri $vboxUrl -OutFile "vbox.exe"
-          Start-Process "vbox.exe" -ArgumentList "--silent", "--ignore-reboot", "--msiparams", "VBOX_INSTALLDESKTOPSHORTCUT=0" -Wait
-          
-          # إضافة المسار فورياً للجلسة الحالية وللنظام
-          $vboxPath = "C:\Program Files\Oracle\VirtualBox"
-          if (Test-Path $vboxPath) {
-              $env:Path += ";$vboxPath"
-              [Environment]::SetEnvironmentVariable("Path", $env:Path + ";$vboxPath", [EnvironmentVariableTarget]::Machine)
-              Write-Host "✅ VirtualBox installed." -ForegroundColor Green
-          }
-          Remove-Item "vbox.exe" -Force
-
-      - name: Start Chrome Remote Desktop (Using Successful Method)
+      - name: Start Chrome Remote Desktop
         shell: pwsh
         env:
           CRD_CODE: ${{ secrets.CRD_CODE }}
           CRD_PIN: ${{ secrets.CRD_PIN }}
         run: |
-          Write-Host "=== Step 4: Starting CRD ===" -ForegroundColor Cyan
+          # تحديد مسار البرنامج
           $exePath = "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
           
-          # التشغيل بنفس الطريقة التي نجحت معك سابقاً مع إضافة --non-interactive
-          & $exePath --code="$env:CRD_CODE" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name=$Env:COMPUTERNAME --pin=$env:CRD_PIN --non-interactive
-          
-          Write-Host "✅ CRD Command executed." -ForegroundColor Green
+          # تشغيل السيرفر مع الكود والرقم السري
+          & $exePath --code="$env:CRD_CODE" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name=$Env:COMPUTERNAME --pin=$env:CRD_PIN
 
-      - name: Keep Alive & Health Check
+      - name: Success Message
         shell: pwsh
         run: |
-          Write-Host "=== System is Live! ===" -ForegroundColor Magenta
-          Write-Host "Computer Name: $env:COMPUTERNAME"
-          
-          $i = 0
-          while ($true) {
-            $i++
-            # فحص العمليات النشطة لـ CRD (العملية الفعلية تسمى remoting_host)
-            $crdProcess = Get-Process "remoting_host" -ErrorAction SilentlyContinue
-            
-            if ($crdProcess) {
-                Write-Host "[$i] CRD is Running. (Processes: $($crdProcess.Count))" -ForegroundColor Green
-            } else {
-                Write-Host "[$i] ⚠️ CRD process not detected yet, waiting..." -ForegroundColor Yellow
-            }
-            
-            Start-Sleep -Seconds 60
-          }
+          Write-Host "======================================================"
+          Write-Host "✅ Windows 10 Environment is READY!"
+          Write-Host "🔗 Go to: https://remotedesktop.google.com/access"
+          Write-Host "👉 Connect to the PC named '$Env:COMPUTERNAME' using your PIN."
+          Write-Host "======================================================"
+
+      - name: Keep Alive
+        shell: pwsh
+        run: |
+          while ($true) { Start-Sleep -Seconds 300 }
