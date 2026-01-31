@@ -5,36 +5,14 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest  # العودة إلى الأحدث للحصول على أفضل دعم للـ virtualization
+    runs-on: windows-2019
     steps:
-      - name: Enable Virtualization Features (No Restart)
+      - name: Enable Virtualization Features
         shell: pwsh
         run: |
-          # تفعيل ميزات الـ virtualization بدون طلب إعادة التشغيل
-          Write-Host "Enabling virtualization features..."
-          
-          # تفعيل Windows Hypervisor Platform (مهم جدًا لـ VirtualBox على Windows 10/Server)
-          dism.exe /online /enable-feature /featurename:HypervisorPlatform /all /norestart
-          
-          # تفعيل ميزات Hyper-V الأساسية
-          dism.exe /online /enable-feature /featurename:Microsoft-Hyper-V /all /norestart
-          
-          # تفعيل ميزات VM الأساسية
-          dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
-          
-          Write-Host "✅ Virtualization features enabled without restart!"
-
-      - name: Enable Nested Virtualization in Registry
-        shell: pwsh
-        run: |
-          # تمكين Nested Virtualization في الريجستري (للمضيفين الافتراضيين)
-          reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Virtualization" /v HypervisorEnforcedCodeIntegrity /t REG_DWORD /d 0 /f
-          reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Virtualization" /v RequireSecureBoot /t REG_DWORD /d 0 /f
-          
-          # إعدادات إضافية لتحسين التوافق
-          reg add "HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" /v Enabled /t REG_DWORD /d 0 /f
-          
-          Write-Host "✅ Nested virtualization registry settings applied!"
+          # تفعيل Hypervisor Platform فقط
+          Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All
+          Write-Host "✅ HypervisorPlatform enabled!"
 
       - name: Download Chrome Installer
         shell: pwsh
@@ -48,39 +26,23 @@ jobs:
           Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd.msi"
           Start-Process -FilePath "msiexec.exe" -Args "/i crd.msi /quiet /qn" -Wait
 
-      - name: Download and Install VirtualBox (With Fix)
+      - name: Download VirtualBox
         shell: pwsh
         run: |
           # تحميل VirtualBox
-          Write-Host "Downloading VirtualBox..."
           Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.0.14/VirtualBox-7.0.14-161095-Win.exe" -OutFile "virtualbox.exe"
           
-          # تثبيت VirtualBox مع إعدادات خاصة
-          Write-Host "Installing VirtualBox with special parameters..."
-          Start-Process -FilePath ".\virtualbox.exe" -Args "--silent --ignore-reboot --msiparams VBOX_INSTALLDESKTOPSHORTCUT=0 REBOOT=ReallySuppress" -Wait
-          
-          # إضافة مسار VirtualBox إلى الـ PATH
-          [Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";C:\Program Files\Oracle\VirtualBox", "Machine")
-          $env:PATH = [Environment]::GetEnvironmentVariable("PATH", "Machine") + ";C:\Program Files\Oracle\VirtualBox"
-          
-          Write-Host "✅ VirtualBox installed successfully!"
-
-      - name: Configure VirtualBox for Windows Server
+      - name: Install VirtualBox (Silent)
         shell: pwsh
         run: |
-          # إنشاء ملف تكوين لـ VirtualBox لتجاوز مشاكل الـ Hypervisor
-          $vboxConfig = @"
-# VirtualBox Configuration for Windows Server
-VBoxManage setextradata global "VBoxInternal2/SvmEnable" "1"
-VBoxManage setextradata global "VBoxInternal2/EnableNestedPaging" "1"
-VBoxManage setextradata global "VBoxInternal2/Ept" "1"
-VBoxManage setextradata global "VBoxInternal2/SvmAlwaysPassVmcbToGuest" "1"
-"@
+          # تثبيت VirtualBox بصمت
+          Start-Process -FilePath ".\virtualbox.exe" -Args "--silent --msiparams VBOX_INSTALLDESKTOPSHORTCUT=0 INSTALLDIR=""C:\VirtualBox""" -Wait
           
-          # حفظ الإعدادات في ملف تنفيذي
-          $vboxConfig | Out-File -FilePath "C:\ConfigureVBox.bat" -Encoding ASCII
+          # إضافة مسار VirtualBox إلى الـ PATH
+          [Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";C:\VirtualBox", "Machine")
+          $env:PATH += ";C:\VirtualBox"
           
-          Write-Host "✅ VirtualBox configuration file created!"
+          Write-Host "✅ VirtualBox installed successfully!"
 
       - name: Start Chrome Remote Desktop
         shell: pwsh
@@ -91,98 +53,23 @@ VBoxManage setextradata global "VBoxInternal2/SvmAlwaysPassVmcbToGuest" "1"
           $exePath = "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
           & $exePath --code="$env:CRD_CODE" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name=$Env:COMPUTERNAME --pin=$env:CRD_PIN
 
-      - name: Run VirtualBox Test
+      - name: Verify Virtualization
         shell: pwsh
         run: |
-          Write-Host "=== Testing VirtualBox Installation ==="
-          
-          # التحقق من تثبيت VirtualBox
-          if (Test-Path "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe") {
-              Write-Host "✅ VirtualBox is installed"
-              
-              # عرض إصدار VirtualBox
-              & "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe" --version
-              
-              # التحقق من دعم الـ virtualization
-              Write-Host "`nChecking virtualization support..."
-              
-              # فحص ميزات النظام
-              systeminfo | Select-String "Hyper-V"
-              
-          } else {
-              Write-Host "⚠️ VirtualBox not found in default location"
-          }
-          
-          Write-Host "`n=== Current Virtualization Status ==="
-          bcdedit | Select-String "hypervisorlaunchtype"
-
-      - name: Create VirtualBox Troubleshooting Script
-        shell: pwsh
-        run: |
-          # إنشاء سكريبت لاستكشاف أخطاء VirtualBox وإصلاحها
-          $troubleshootScript = @"
-@echo off
-echo ========================================
-echo VirtualBox Troubleshooting Script
-echo ========================================
-echo.
-
-echo [1] Checking Hyper-V status...
-bcdedit | findstr hypervisorlaunchtype
-
-echo.
-echo [2] Checking Windows Features...
-dism /online /get-features | findstr /I "hypervisor"
-
-echo.
-echo [3] Checking VirtualBox installation...
-if exist "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe" (
-    echo VirtualBox is installed.
-    "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe" --version
-) else (
-    echo VirtualBox is NOT installed.
-)
-
-echo.
-echo [4] System Information (Virtualization related)...
-systeminfo | findstr /I "virtualization"
-
-echo.
-echo [5] If VirtualBox shows errors, try disabling Hyper-V:
-echo bcdedit /set hypervisorlaunchtype off
-echo Then restart the system.
-
-echo.
-echo ========================================
-echo Troubleshooting complete!
-echo ========================================
-pause
-"@
-          
-          $troubleshootScript | Out-File -FilePath "C:\TroubleshootVBox.bat" -Encoding ASCII
-          Write-Host "✅ Troubleshooting script created at C:\TroubleshootVBox.bat"
+          Write-Host "=== Checking Virtualization Support ==="
+          systeminfo | Select-String -Pattern "Hyper-V"
 
       - name: Success Message
         shell: pwsh
         run: |
           Write-Host "======================================================"
-          Write-Host "✅ Windows Environment with VirtualBox is READY!"
+          Write-Host "✅ Windows 10 Environment with VirtualBox is READY!"
           Write-Host "🔗 Go to: https://remotedesktop.google.com/access"
           Write-Host "👉 Connect to the PC named '$Env:COMPUTERNAME' using your PIN."
-          Write-Host "👉 VirtualBox is installed at: C:\Program Files\Oracle\VirtualBox"
-          Write-Host ""
-          Write-Host "⚠️ IMPORTANT FOR VIRTUALBOX:"
-          Write-Host "If VirtualBox shows WHvCapabilityCodeHypervisorPresent errors:"
-          Write-Host "1. Run C:\TroubleshootVBox.bat"
-          Write-Host "2. Disable Hyper-V if not needed:"
-          Write-Host "   bcdedit /set hypervisorlaunchtype off"
-          Write-Host "3. Use VMware Workstation Player as alternative"
+          Write-Host "👉 VirtualBox is installed at: C:\VirtualBox"
           Write-Host "======================================================"
 
       - name: Keep Alive
         shell: pwsh
         run: |
-          while ($true) { 
-            Write-Host "System is alive at $(Get-Date)"
-            Start-Sleep -Seconds 300 
-          }
+          while ($true) { Start-Sleep -Seconds 300 }
