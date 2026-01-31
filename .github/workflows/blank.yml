@@ -1,11 +1,94 @@
-- name: Install Docker Desktop
-  shell: pwsh
-  run: |
-    # تحميل وتثبيت Docker Desktop مع WSL2
-    Invoke-WebRequest -Uri "https://desktop.docker.com/win/stable/Docker%20Desktop%20Installer.exe" -OutFile "docker-desktop.exe"
-    Start-Process -FilePath ".\docker-desktop.exe" -Args "install --quiet --accept-license --backend=wsl-2" -Wait
-    
-    # تشغيل Docker Desktop
-    Start-Process -FilePath "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-    
-    Write-Host "✅ Docker Desktop installed with WSL2 backend!"
+name: Ultimate-Win10-CRD-with-Virtualization
+
+on: 
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2019
+    steps:
+      - name: Enable Virtualization Features
+        shell: pwsh
+        run: |
+          # تفعيل Hypervisor Platform
+          Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All -NoRestart
+          
+          # تفعيل Hyper-V (إذا لزم الأمر)
+          Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All -NoRestart
+          
+          # تفعيل ميزات Windows Sandbox (تحتوي على متطلبات الـ virtualization)
+          Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All -NoRestart
+          
+          Write-Host "✅ Virtualization features enabled!"
+
+      - name: Download Chrome Installer
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile "chrome_installer.exe"
+          Start-Process -FilePath "chrome_installer.exe" -Args "/silent /install" -Wait
+
+      - name: Download and Install CRD
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd.msi"
+          Start-Process -FilePath "msiexec.exe" -Args "/i crd.msi /quiet /qn" -Wait
+
+      - name: Download VirtualBox
+        shell: pwsh
+        run: |
+          # تحميل VirtualBox
+          Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.0.14/VirtualBox-7.0.14-161095-Win.exe" -OutFile "virtualbox.exe"
+          
+      - name: Install VirtualBox (Silent)
+        shell: pwsh
+        run: |
+          # تثبيت VirtualBox بصمت مع تفعيل جميع الميزات
+          Start-Process -FilePath ".\virtualbox.exe" -Args "--silent --msiparams VBOX_INSTALLDESKTOPSHORTCUT=0 INSTALLDIR=""C:\VirtualBox""" -Wait
+          
+          # إضافة مسار VirtualBox إلى الـ PATH
+          [Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";C:\VirtualBox", "Machine")
+          $env:PATH += ";C:\VirtualBox"
+          
+          Write-Host "✅ VirtualBox installed successfully!"
+
+      - name: Start Chrome Remote Desktop
+        shell: pwsh
+        env:
+          CRD_CODE: ${{ secrets.CRD_CODE }}
+          CRD_PIN: ${{ secrets.CRD_PIN }}
+        run: |
+          $exePath = "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
+          & $exePath --code="$env:CRD_CODE" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name=$Env:COMPUTERNAME --pin=$env:CRD_PIN
+
+      - name: Verify Virtualization
+        shell: pwsh
+        run: |
+          Write-Host "=== Checking Virtualization Support ==="
+          
+          # التحقق من تفعيل Hypervisor
+          $hyperv = Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
+          Write-Host "HypervisorPlatform Status: $($hyperv.State)"
+          
+          # التحقق من دعم AMD-V/Intel VT
+          $cpu = Get-WmiObject Win32_Processor
+          Write-Host "CPU: $($cpu.Name)"
+          Write-Host "Virtualization Enabled in BIOS: $($cpu.VirtualizationFirmwareEnabled)"
+          Write-Host "Second Level Address Translation: $($cpu.SecondLevelAddressTranslationExtensions)"
+          
+          # تشغيل أمر فحص النظام
+          systeminfo | Select-String -Pattern "Hyper-V"
+
+      - name: Success Message
+        shell: pwsh
+        run: |
+          Write-Host "======================================================"
+          Write-Host "✅ Windows 10 Environment with VirtualBox is READY!"
+          Write-Host "🔗 Go to: https://remotedesktop.google.com/access"
+          Write-Host "👉 Connect to the PC named '$Env:COMPUTERNAME' using your PIN."
+          Write-Host "👉 VirtualBox is installed at: C:\VirtualBox"
+          Write-Host "======================================================"
+
+      - name: Keep Alive
+        shell: pwsh
+        run: |
+          while ($true) { Start-Sleep -Seconds 300 }
