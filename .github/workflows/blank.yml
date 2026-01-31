@@ -1,46 +1,36 @@
 name: Windows-CRD-VirtualBox
 
-on: 
+on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 360 # رفع المهلة للسماح بالاستخدام الطويل
+    timeout-minutes: 360
     steps:
-      - name: Configure Virtualization & System
+      - name: Configure Virtualization
         shell: pwsh
         run: |
           Write-Host "=== Step 1: Virtualization Configuration ===" -ForegroundColor Cyan
-          
-          # تفعيل الميزات اللازمة لـ VirtualBox
+          # تفعيل الميزات اللازمة
           dism /online /enable-feature /featurename:HypervisorPlatform /all /quiet /norestart
-          
-          # تعطيل Hyper-V لأنه يسبب مشاكل في الأداء أو التشغيل لـ VirtualBox داخل GitHub Actions
+          # تعطيل Hyper-V لمنع التعارض مع VirtualBox Engine
           dism /online /disable-feature /featurename:Microsoft-Hyper-V /quiet /norestart
-          
-          # ضبط الـ Hypervisor ليكون مغلقاً عند البدء لضمان عمل VirtualBox Engine
           bcdedit /set hypervisorlaunchtype off
-          
-          Write-Host "✅ Virtualization features configured." -ForegroundColor Green
+          Write-Host "✅ Virtualization configured." -ForegroundColor Green
 
-      - name: Install Essential Software (Chrome & CRD)
+      - name: Install Chrome & CRD
         shell: pwsh
         run: |
           Write-Host "=== Step 2: Installing Chrome & CRD ===" -ForegroundColor Cyan
-          
-          # تحميل وتثبيت Chrome
           $chromeUrl = "https://dl.google.com/chrome/install/latest/chrome_installer.exe"
           Invoke-WebRequest -Uri $chromeUrl -OutFile "chrome_installer.exe"
           Start-Process "chrome_installer.exe" -ArgumentList "/silent /install" -Wait
           
-          # تحميل وتثبيت Chrome Remote Desktop
           $crdUrl = "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi"
           Invoke-WebRequest -Uri $crdUrl -OutFile "crd.msi"
           Start-Process "msiexec.exe" -ArgumentList "/i crd.msi /quiet /qn /norestart" -Wait
-          
           Remove-Item "chrome_installer.exe", "crd.msi" -Force
-          Write-Host "✅ Chrome and CRD installed." -ForegroundColor Green
 
       - name: Install VirtualBox 7.0
         shell: pwsh
@@ -48,62 +38,48 @@ jobs:
           Write-Host "=== Step 3: Installing VirtualBox ===" -ForegroundColor Cyan
           $vboxUrl = "https://download.virtualbox.org/virtualbox/7.0.14/VirtualBox-7.0.14-161095-Win.exe"
           Invoke-WebRequest -Uri $vboxUrl -OutFile "vbox.exe"
-          
-          # التثبيت الصامت مع تجاهل إعادة التشغيل
           Start-Process "vbox.exe" -ArgumentList "--silent", "--ignore-reboot", "--msiparams", "VBOX_INSTALLDESKTOPSHORTCUT=0" -Wait
           
-          # إضافة مسار VirtualBox للمتغيرات البيئية (Path)
+          # إضافة المسار فورياً للجلسة الحالية وللنظام
           $vboxPath = "C:\Program Files\Oracle\VirtualBox"
-          [Environment]::SetEnvironmentVariable("Path", $env:Path + ";$vboxPath", [EnvironmentVariableTarget]::Machine)
-          
-          if (Test-Path "$vboxPath\VirtualBox.exe") {
-            Write-Host "✅ VirtualBox installed successfully!" -ForegroundColor Green
-          } else {
-            Write-Host "❌ VirtualBox installation failed!" -ForegroundColor Red
+          if (Test-Path $vboxPath) {
+              $env:Path += ";$vboxPath"
+              [Environment]::SetEnvironmentVariable("Path", $env:Path + ";$vboxPath", [EnvironmentVariableTarget]::Machine)
+              Write-Host "✅ VirtualBox installed." -ForegroundColor Green
           }
           Remove-Item "vbox.exe" -Force
 
-      - name: Setup Remote Desktop (CRD)
+      - name: Start Chrome Remote Desktop (Using Successful Method)
         shell: pwsh
         env:
           CRD_CODE: ${{ secrets.CRD_CODE }}
           CRD_PIN: ${{ secrets.CRD_PIN }}
         run: |
-          Write-Host "=== Step 4: Starting Chrome Remote Desktop ===" -ForegroundColor Cyan
+          Write-Host "=== Step 4: Starting CRD ===" -ForegroundColor Cyan
+          $exePath = "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
           
-          # البحث عن ملف التشغيل في المسارات المحتملة
-          $crdPath = Get-ChildItem -Path "C:\Program Files (x86)\Google\Chrome Remote Desktop" -Filter "remoting_start_host.exe" -Recurse | Select-Object -First 1
+          # التشغيل بنفس الطريقة التي نجحت معك سابقاً مع إضافة --non-interactive
+          & $exePath --code="$env:CRD_CODE" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name=$Env:COMPUTERNAME --pin=$env:CRD_PIN --non-interactive
           
-          if ($crdPath) {
-            Start-Process -FilePath $crdPath.FullName -ArgumentList `
-              "--code=$env:CRD_CODE", `
-              "--redirect-url=https://remotedesktop.google.com/_/oauthredirect", `
-              "--name=$env:COMPUTERNAME", `
-              "--pin=$env:CRD_PIN" -NoNewWindow
-            
-            Write-Host "✅ CRD Host started. Check: https://remotedesktop.google.com/access" -ForegroundColor Green
-          } else {
-            Write-Host "❌ Could not find CRD executable!" -ForegroundColor Red
-            exit 1
-          }
+          Write-Host "✅ CRD Command executed." -ForegroundColor Green
 
       - name: Keep Alive & Health Check
         shell: pwsh
         run: |
           Write-Host "=== System is Live! ===" -ForegroundColor Magenta
           Write-Host "Computer Name: $env:COMPUTERNAME"
-          Write-Host "Access via: https://remotedesktop.google.com/access"
           
-          # حلقة لا نهائية لإبقاء الـ Runner يعمل
           $i = 0
           while ($true) {
             $i++
-            $time = Get-Date -Format "HH:mm:ss"
-            Write-Host "[$time] Runner active... session minute: $i"
+            # فحص العمليات النشطة لـ CRD (العملية الفعلية تسمى remoting_host)
+            $crdProcess = Get-Process "remoting_host" -ErrorAction SilentlyContinue
             
-            # فحص حالة خدمة CRD لضمان عدم توقفها
-            $service = Get-Process "remoting_host" -ErrorAction SilentlyContinue
-            if (-not $service) { Write-Host "⚠️ Warning: CRD Service process not detected." -ForegroundColor Yellow }
+            if ($crdProcess) {
+                Write-Host "[$i] CRD is Running. (Processes: $($crdProcess.Count))" -ForegroundColor Green
+            } else {
+                Write-Host "[$i] ⚠️ CRD process not detected yet, waiting..." -ForegroundColor Yellow
+            }
             
             Start-Sleep -Seconds 60
           }
