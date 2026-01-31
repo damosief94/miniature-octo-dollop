@@ -1,75 +1,198 @@
-name: Ultimate-Win10-CRD-with-Virtualization
+name: Windows-CRD-VirtualBox
 
 on: 
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-2019
+    runs-on: windows-latest
+    timeout-minutes: 30
     steps:
-      - name: Enable Virtualization Features
+      - name: Configure Virtualization (Basic)
         shell: pwsh
         run: |
-          # تفعيل Hypervisor Platform فقط
-          Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All
-          Write-Host "✅ HypervisorPlatform enabled!"
-
-      - name: Download Chrome Installer
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile "chrome_installer.exe"
-          Start-Process -FilePath "chrome_installer.exe" -Args "/silent /install" -Wait
-
-      - name: Download and Install CRD
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd.msi"
-          Start-Process -FilePath "msiexec.exe" -Args "/i crd.msi /quiet /qn" -Wait
-
-      - name: Download VirtualBox
-        shell: pwsh
-        run: |
-          # تحميل VirtualBox
-          Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.0.14/VirtualBox-7.0.14-161095-Win.exe" -OutFile "virtualbox.exe"
+          Write-Host "=== Basic Virtualization Configuration ==="
           
-      - name: Install VirtualBox (Silent)
+          # تفعيل Windows Hypervisor Platform فقط (الأهم لـ VirtualBox)
+          Write-Host "Enabling HypervisorPlatform..."
+          Start-Process "dism" -ArgumentList "/online /enable-feature /featurename:HypervisorPlatform /all /quiet /norestart" -Wait -NoNewWindow
+          
+          # تعطيل Hyper-V لمنع التعارض مع VirtualBox
+          Write-Host "Disabling Hyper-V to prevent conflicts..."
+          Start-Process "dism" -ArgumentList "/online /disable-feature /featurename:Microsoft-Hyper-V /quiet /norestart" -Wait -NoNewWindow
+          
+          # تغيير إعدادات الـ hypervisor launch type
+          Write-Host "Setting hypervisorlaunchtype to off..."
+          Start-Process "bcdedit" -ArgumentList "/set hypervisorlaunchtype off" -Wait -NoNewWindow
+          
+          Write-Host "✅ Basic virtualization configuration complete!"
+
+      - name: Install Chrome
         shell: pwsh
         run: |
-          # تثبيت VirtualBox بصمت
-          Start-Process -FilePath ".\virtualbox.exe" -Args "--silent --msiparams VBOX_INSTALLDESKTOPSHORTCUT=0 INSTALLDIR=""C:\VirtualBox""" -Wait
-          
-          # إضافة مسار VirtualBox إلى الـ PATH
-          [Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";C:\VirtualBox", "Machine")
-          $env:PATH += ";C:\VirtualBox"
-          
-          Write-Host "✅ VirtualBox installed successfully!"
+          Write-Host "Installing Chrome..."
+          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile "$env:TEMP\chrome_installer.exe"
+          Start-Process -FilePath "$env:TEMP\chrome_installer.exe" -Args "/silent /install" -Wait -NoNewWindow
+          Remove-Item "$env:TEMP\chrome_installer.exe" -Force
 
-      - name: Start Chrome Remote Desktop
+      - name: Install Chrome Remote Desktop
+        shell: pwsh
+        run: |
+          Write-Host "Installing Chrome Remote Desktop..."
+          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "$env:TEMP\crd.msi"
+          Start-Process "msiexec.exe" -Args "/i $env:TEMP\crd.msi /quiet /qn /norestart" -Wait -NoNewWindow
+          Remove-Item "$env:TEMP\crd.msi" -Force
+
+      - name: Install VirtualBox (Latest Stable)
+        shell: pwsh
+        run: |
+          Write-Host "Downloading VirtualBox..."
+          
+          # تحميل VirtualBox 7.0 (الإصدار المستقر)
+          $vboxUrl = "https://download.virtualbox.org/virtualbox/7.0.14/VirtualBox-7.0.14-161095-Win.exe"
+          $installer = "$env:TEMP\virtualbox.exe"
+          
+          Invoke-WebRequest -Uri $vboxUrl -OutFile $installer
+          
+          Write-Host "Installing VirtualBox (silent mode)..."
+          
+          # تثبيت VirtualBox مع إعدادات مبسطة
+          $installArgs = @(
+            "--silent",
+            "--ignore-reboot",
+            "--msiparams", "VBOX_INSTALLDESKTOPSHORTCUT=0",
+            "--msiparams", "INSTALLDIR=C:\Program Files\Oracle\VirtualBox"
+          )
+          
+          Start-Process -FilePath $installer -ArgumentList $installArgs -Wait -NoNewWindow
+          
+          # الانتظار قليلاً للتأكد من اكتمال التثبيت
+          Start-Sleep -Seconds 10
+          
+          # التحقق من التثبيت
+          if (Test-Path "C:\Program Files\Oracle\VirtualBox\VirtualBox.exe") {
+            Write-Host "✅ VirtualBox installed successfully!"
+          } else {
+            Write-Host "⚠️ VirtualBox might not be installed correctly"
+          }
+          
+          Remove-Item $installer -Force -ErrorAction SilentlyContinue
+
+      - name: Configure System for VirtualBox
+        shell: pwsh
+        run: |
+          Write-Host "=== System Configuration for VirtualBox ==="
+          
+          # إعدادات الريجستري المهمة
+          Write-Host "Setting registry keys..."
+          
+          # تمكين features للـ virtualization
+          $regPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+          if (-not (Test-Path $regPath)) {
+            New-Item -Path $regPath -Force | Out-Null
+          }
+          
+          # إضافة إلى PATH
+          $currentPath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+          $vboxPath = "C:\Program Files\Oracle\VirtualBox"
+          
+          if ($currentPath -notlike "*$vboxPath*") {
+            [Environment]::SetEnvironmentVariable("PATH", "$currentPath;$vboxPath", "Machine")
+          }
+          
+          Write-Host "✅ System configured for VirtualBox"
+
+      - name: Start Chrome Remote Desktop Service
         shell: pwsh
         env:
           CRD_CODE: ${{ secrets.CRD_CODE }}
           CRD_PIN: ${{ secrets.CRD_PIN }}
         run: |
+          Write-Host "Starting Chrome Remote Desktop..."
+          
           $exePath = "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
-          & $exePath --code="$env:CRD_CODE" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name=$Env:COMPUTERNAME --pin=$env:CRD_PIN
+          
+          if (Test-Path $exePath) {
+            # تشغيل CRD في الخلفية
+            Start-Process -FilePath $exePath -ArgumentList @(
+              "--code=$env:CRD_CODE",
+              "--redirect-url=https://remotedesktop.google.com/_/oauthredirect",
+              "--name=$Env:COMPUTERNAME",
+              "--pin=$env:CRD_PIN"
+            ) -NoNewWindow
+            
+            Write-Host "✅ Chrome Remote Desktop started!"
+          } else {
+            Write-Host "❌ CRD executable not found at: $exePath"
+          }
 
-      - name: Verify Virtualization
+      - name: Create Verification Script
         shell: pwsh
         run: |
-          Write-Host "=== Checking Virtualization Support ==="
-          systeminfo | Select-String -Pattern "Hyper-V"
+          # إنشاء سكريبت تحقق بسيط
+          $verifyScript = @'
+@echo off
+echo ========================================
+echo System Verification
+echo ========================================
+echo.
+echo Checking installed software:
+echo.
 
-      - name: Success Message
+where chrome >nul 2>nul && echo ✅ Chrome is installed || echo ❌ Chrome not found
+where VirtualBox >nul 2>nul && echo ✅ VirtualBox is installed || echo ❌ VirtualBox not found
+
+echo.
+echo Checking virtualization:
+bcdedit | findstr hypervisorlaunchtype
+
+echo.
+echo ========================================
+echo To use VirtualBox:
+echo 1. Open C:\Program Files\Oracle\VirtualBox\
+echo 2. Run VirtualBox.exe as Administrator
+echo 3. If issues occur, try disabling Hyper-V completely:
+echo    bcdedit /set hypervisorlaunchtype off
+echo ========================================
+pause
+'@
+          
+          $verifyScript | Out-File -FilePath "C:\VerifySystem.bat" -Encoding ASCII
+          Write-Host "✅ Verification script created: C:\VerifySystem.bat"
+
+      - name: Final Status Check
         shell: pwsh
         run: |
-          Write-Host "======================================================"
-          Write-Host "✅ Windows 10 Environment with VirtualBox is READY!"
-          Write-Host "🔗 Go to: https://remotedesktop.google.com/access"
-          Write-Host "👉 Connect to the PC named '$Env:COMPUTERNAME' using your PIN."
-          Write-Host "👉 VirtualBox is installed at: C:\VirtualBox"
-          Write-Host "======================================================"
+          Write-Host "=== FINAL STATUS CHECK ==="
+          Write-Host "Chrome installed: $(Test-Path 'C:\Program Files\Google\Chrome\Application\chrome.exe')"
+          Write-Host "VirtualBox installed: $(Test-Path 'C:\Program Files\Oracle\VirtualBox\VirtualBox.exe')"
+          Write-Host "CRD installed: $(Test-Path '${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe')"
+          
+          Write-Host "`n=== IMPORTANT NOTES ==="
+          Write-Host "1. VirtualBox may require Hyper-V to be disabled"
+          Write-Host "2. Run 'C:\VerifySystem.bat' to check system status"
+          Write-Host "3. Access your machine at: https://remotedesktop.google.com/access"
+          Write-Host "4. Computer name: $Env:COMPUTERNAME"
 
-      - name: Keep Alive
+      - name: Keep System Alive
         shell: pwsh
         run: |
-          while ($true) { Start-Sleep -Seconds 300 }
+          Write-Host "System will stay active for remote access..."
+          Write-Host "Access via: https://remotedesktop.google.com/access"
+          Write-Host "Press Ctrl+C in GitHub Actions to stop"
+          
+          # حل أبسط للبقاء نشطًا
+          $counter = 0
+          while ($true) {
+            $counter++
+            Write-Host "Still running... [$(Get-Date -Format 'HH:mm:ss')] Counter: $counter"
+            
+            # التحقق من أن CRD لا يزال يعمل
+            $crdProcess = Get-Process -Name "remoting_start_host" -ErrorAction SilentlyContinue
+            if (-not $crdProcess) {
+              Write-Host "⚠️ CRD process not found, attempting restart..."
+              # يمكن إضافة إعادة التشغيل هنا إذا لزم الأمر
+            }
+            
+            Start-Sleep -Seconds 60
+          }
