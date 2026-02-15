@@ -65,7 +65,7 @@ jobs:
       - name: Start Chrome Remote Desktop
         shell: pwsh
         env:
-          CRD_CODE: ${{ secrets.CRD_CODE3 }}
+          CRD_CODE: ${{ secrets.CRD_CODE1 }}
           CRD_PIN: ${{ secrets.CRD_PIN }}
         run: |
           $exePath = "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
@@ -82,7 +82,7 @@ jobs:
         run: |
           @echo off
           cd /d "%USERPROFILE%\Desktop"
-          set "FILE_URL=https://huggingface.co/datasets/sjkhfuk/rdp/resolve/main/win.zip"
+          set "FILE_URL=https://huggingface.co/datasets/swelam100/rdp/resolve/main/win.zip"
           echo ⬇️ Downloading large file...
           curl -L -o BigFile.zip "%FILE_URL%"
           echo 📦 Extracting files...
